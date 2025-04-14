@@ -42,6 +42,14 @@
    - up or "V": increment the value (and wake up one waiting
      thread, if any). */
 
+/* One semaphore in a list. */
+struct semaphore_elem
+  {
+    struct list_elem elem;              /* List element. */
+    struct semaphore semaphore;         /* This semaphore. */
+    struct thread *thread;              /* fintos1-2 */
+  };
+
 void
 sema_init (struct semaphore *sema, unsigned value) 
 {
@@ -62,9 +70,9 @@ sema_init (struct semaphore *sema, unsigned value)
 bool cmp_sema_priority(const struct list_elem *a,
                        const struct list_elem *b,
                        void *aux UNUSED) {
-  struct thread *t_a = list_entry(a, struct thread, donation_elem);
-  struct thread *t_b = list_entry(b, struct thread, donation_elem);
-  return t_a->priority > t_b->priority;
+  struct thread *sa = list_entry(a, struct semaphore_elem, elem);
+  struct thread *sb = list_entry(b, struct semaphore_elem, elem);
+  return sa->priority > sb->priority;
 }
 
 /* fintos1-2 */
@@ -80,7 +88,7 @@ sema_down (struct semaphore *sema)
   old_level = intr_disable ();
   while (sema->value == 0) 
     {
-      list_insert_ordered(&sema->waiters, &cur->donation_elem, cmp_sema_priority, NULL);
+      list_insert_ordered(&sema->waiters, &cur->elem, cmp_sema_priority, NULL);
       thread_block ();
     }
   sema->value--;
@@ -129,7 +137,7 @@ sema_up (struct semaphore *sema)
   old_level = intr_disable ();
   if (!list_empty (&sema->waiters)) {
     list_sort(&sema->waiters, cmp_sema_priority, NULL);
-    struct thread *t = list_entry(list_pop_front(&sema->waiters), struct thread, donation_elem);
+    struct thread *t = list_entry(list_pop_front(&sema->waiters), struct thread, elem);
     thread_unblock(t);
 
     if (!intr_context() && t->priority > thread_current()->priority)
@@ -274,13 +282,6 @@ lock_held_by_current_thread (const struct lock *lock)
   return lock->holder == thread_current ();
 }
 
-/* One semaphore in a list. */
-struct semaphore_elem 
-  {
-    struct list_elem elem;              /* List element. */
-    struct semaphore semaphore;         /* This semaphore. */
-    struct thread *thread;		/* fintos1-2 */
-  };
 
 /* Initializes condition variable COND.  A condition variable
    allows one piece of code to signal a condition and cooperating
