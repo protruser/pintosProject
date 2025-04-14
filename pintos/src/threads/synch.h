@@ -41,6 +41,10 @@ void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
 void cond_broadcast (struct condition *, struct lock *);
 
+/*fintos2*/
+bool cmp_cond_priority(struct list_elem *first, struct list_elem *second, void *aux);
+/*fintos2*/
+
 /* Optimization barrier.
 
    The compiler will not reorder operations across an
