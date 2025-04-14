@@ -103,6 +103,12 @@ struct thread
 
     /* fintos1 */
     int64_t wake_up_time;
+
+    /* fintos1-2 */
+    int init_priority;
+    struct lock *wait_on_lock;
+    struct list donations;
+    struct list_elem donation_elem;
   };
 
 /* If false (default), use round-robin scheduler.
@@ -135,6 +141,12 @@ void thread_foreach (thread_action_func *, void *);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
+
+/* fintos1-2 */
+bool cmp_priority(const struct list_elem *a, const struct list_elem *b, void *aux);
+void donate_priority(void);
+void remove_with_lock(struct lock *lock);
+void refresh_priority(void);
 
 int thread_get_nice (void);
 void thread_set_nice (int);

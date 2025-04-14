@@ -87,6 +87,14 @@ static tid_t allocate_tid (void);
 
    It is not safe to call thread_current() until this function
    finishes. */
+/* fintos1-2 */
+bool
+cmp_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+  struct thread *t_a = list_entry(a, struct thread, elem);
+  struct thread *t_b = list_entry(b, struct thread, elem);
+  return t_a->priority > t_b->priority;
+}
+
 void
 thread_init (void) 
 {
@@ -213,6 +221,9 @@ thread_create (const char *name, int priority,
   /* Add to run queue. */
   thread_unblock (t);
 
+  if (!intr_context() && t->priority > thread_current()->priority)
+    thread_yield();
+
   return tid;
 }
 
@@ -222,6 +233,53 @@ thread_create (const char *name, int priority,
    This function must be called with interrupts turned off.  It
    is usually a better idea to use one of the synchronization
    primitives in synch.h. */
+
+/* fintos1-2 */
+void donate_priority(void) {
+  struct thread *cur = thread_current();
+  struct lock *lock = cur->wait_on_lock;
+
+  int depth = 0;
+  while (lock && depth < 8) {
+    if (!lock->holder) break;
+    
+    if (lock->holder->priority < cur->priority) {
+      lock->holder->priority = cur->priority;
+    }
+
+    cur = lock->holder;
+    lock = cur->wait_on_lock;
+    depth++;
+  }
+}
+
+void remove_with_lock(struct lock *lock) {
+  struct thread *cur = thread_current();
+  struct list_elem *e = list_begin(&cur->donations);
+
+  while(e != list_end(&cur->donations)) {
+    struct thread *t = list_entry(e, struct thread, donation_elem);
+    if (t->wait_on_lock == lock)
+      e = list_remove(e);
+    else
+      e = list_next(e);
+  }
+}
+
+void refresh_priority(void) {
+  struct thread *cur = thread_current();
+  cur->priority = cur->init_priority;
+
+  if (!list_empty(&cur->donations)) {
+    struct thread *max = list_entry(
+    list_max(&cur->donations, cmp_priority, NULL),
+    struct thread, donation_elem);
+
+  if (max->priority > cur->priority)
+    cur->priority = max->priority;
+  }
+}
+
 void
 thread_block (void) 
 {
@@ -282,7 +340,8 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+  /* fintos1-2 */
+  list_insert_ordered(&ready_list, &t->elem, cmp_priority, NULL);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -353,7 +412,7 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+    list_insert_ordered(&ready_list, &cur->elem, cmp_priority, NULL);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -380,7 +439,15 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  struct thread *cur = thread_current();
+  cur->init_priority = new_priority;
+  cur->priority = new_priority;
+
+  if (!list_empty(&ready_list)) {
+    struct thread *front = list_entry(list_front(&ready_list), struct thread, elem);
+  if (front->priority > cur->priority)
+    thread_yield();
+  }
 }
 
 /* Returns the current thread's priority. */
@@ -505,6 +572,10 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
+  /* fintos1-2 */
+  t->init_priority = priority;
+  t->wait_on_lock = NULL;
+  list_init(&t->donations);
   t->magic = THREAD_MAGIC;
   list_push_back (&all_list, &t->allelem);
 }
@@ -543,7 +614,7 @@ next_thread_to_run (void)
    PREV, the new thread is already running, and interrupts are
    still disabled.  This function is normally invoked by
    thread_schedule() as its final action before returning, but
-   the first time a thread is scheduled it is called by
+   the firct time a thread is scheduled it is called by
    switch_entry() (see switch.S).
 
    It's not safe to call printf() until the thread switch is
@@ -552,6 +623,7 @@ next_thread_to_run (void)
 
    After this function and its caller returns, the thread switch
    is complete. */
+
 void
 thread_schedule_tail (struct thread *prev)
 {
@@ -589,6 +661,7 @@ thread_schedule_tail (struct thread *prev)
 
    It's not safe to call printf() until thread_schedule_tail()
    has completed. */
+
 static void
 schedule (void) 
 {
