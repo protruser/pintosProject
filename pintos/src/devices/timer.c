@@ -7,6 +7,9 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
+/*fintos1*/
+#include <kernel/list.h>
+/*fintos1*/
   
 /* See [8254] for hardware details of the 8254 timer chip. */
 
@@ -19,6 +22,10 @@
 
 /* Number of timer ticks since OS booted. */
 static int64_t ticks;
+
+/*fintos1*/
+struct list sleep_list;
+/*fintos1*/
 
 /* Number of loops per timer tick.
    Initialized by timer_calibrate(). */
@@ -37,6 +44,7 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+  list_init (&sleep_list);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -89,11 +97,25 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks) 
 {
-  /* fintos1 */
-  if (ticks <= 0) return;
+/*fintos1*/
+	struct thread* curthread;
+	enum intr_level curlevel;
 
-  int64_t start = timer_ticks ();
-  thread_sleep(start + ticks);
+  ASSERT (intr_get_level () == INTR_ON);
+
+  curlevel = intr_disable();
+
+  curthread = thread_current();
+
+  curthread->waketick = timer_ticks() + ticks;
+
+  list_insert_ordered (&sleep_list, &curthread->elem, cmp_waketick, NULL);
+
+  thread_block();
+
+  intr_set_level(curlevel);
+/*fintos1*/
+
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -170,10 +192,27 @@ timer_print_stats (void)
 static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
+  /*fintos1*/
+	struct list_elem *head;
+	struct thread *hthread;
+  /*fintos1*/
+
   ticks++;
   thread_tick ();
-  /* fintos1 */
-  thread_wakeup(ticks);
+
+  /*fintos1*/
+	while(!list_empty(&sleep_list))
+	{
+		head = list_front(&sleep_list);
+	  hthread = list_entry (head, struct thread, elem);
+
+	  	if(hthread->waketick > ticks )
+	  		break;
+
+	  	list_remove (head);
+	  	thread_unblock(hthread);
+	}
+  /*fintos1*/
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
