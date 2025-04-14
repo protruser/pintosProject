@@ -102,7 +102,14 @@ struct thread
     unsigned magic;                     /* Detects stack overflow. */
 
     /* fintos1 */
-    int64_t wake_up_time;
+    int64_t wakeup_ticks;
+
+    /* fintos1-2 */
+    int init_priority;
+
+    struct lock *wait_on_lock;
+    struct list donations;
+    struct list_elem donation_elem;
   };
 
 /* If false (default), use round-robin scheduler.
@@ -128,6 +135,19 @@ const char *thread_name (void);
 
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
+
+/* fintos1-1 */
+void thread_sleep (int64_t ticks);
+bool cmp_thread_ticks(const struct list_elem *a, const struct list_elem *b, void *aux);
+void thread_wakeup (int64_t global_ticks);
+
+/* fintos1-2 */
+bool cmp_thread_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
+void preempt_priority(void);
+void donate_priority(void);
+void remove_with_lock(struct lock *lock);
+void refresh_priority(void);
+
 
 /* Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func (struct thread *t, void *aux);
