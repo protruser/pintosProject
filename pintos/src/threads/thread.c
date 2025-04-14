@@ -22,14 +22,13 @@
 
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
+/*fintos2*/
 static struct list ready_list;
+/*fintos2*/
 
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
-
-/* fintos1 */
-struct list sleep_list;
 
 /* Idle thread. */
 static struct thread *idle_thread;
@@ -60,7 +59,13 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
+/*fintos3*/
 bool thread_mlfqs;
+/*fintos3*/
+
+/*fintos1*/
+extern struct list sleep_list;
+/*fintos1*/
 
 static void kernel_thread (thread_func *, void *aux);
 
@@ -95,7 +100,6 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
-  list_init (&sleep_list);
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -137,6 +141,61 @@ thread_tick (void)
 #endif
   else
     kernel_ticks++;
+  
+/*fintos3*/
+  /* MLFQS 계산 (Fixed-point 없이 구현) */
+  if (thread_mlfqs) {
+    /* recent_cpu += 1 (고정소수점: 1 << 14) */
+    if (strcmp(t->name, "idle") != 0)
+      t->recent_cpu += (1 << 14);
+
+    /* 100 tick마다 load_avg와 recent_cpu 업데이트 */
+    if (timer_ticks() % 100 == 0) {
+      int ready_threads = list_size(&ready_list);
+      if (t != idle_thread)
+        ready_threads++;
+
+      /* load_avg = (59/60)*load_avg + (1/60)*ready_threads */
+      load_avg = ((int64_t)load_avg * 59 / 60)
+               + ((int64_t)ready_threads * (1 << 14) / 60);
+
+      /* 모든 스레드의 recent_cpu 업데이트 */
+      struct list_elem *e;
+      for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)) {
+        struct thread *f = list_entry(e, struct thread, allelem);
+
+        /* coefficient = (2*load_avg) / (2*load_avg + 1) */
+        int64_t coeff = ((int64_t)2 * load_avg) * (1 << 14)
+                      / ((int64_t)2 * load_avg + (1 << 14));
+
+        /* recent_cpu = coefficient * recent_cpu + nice */
+        f->recent_cpu = (int)(((int64_t)coeff * f->recent_cpu) / (1 << 14))
+                      + f->nice * (1 << 14);
+      }
+    }
+
+    /* 4 tick마다 priority 재계산 */
+    if (timer_ticks() % 4 == 0) {
+      struct list_elem *e;
+      for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)) {
+        struct thread *f = list_entry(e, struct thread, allelem);
+
+        /* priority = PRI_MAX - (recent_cpu / 4) - (nice * 2) */
+        int new_priority = PRI_MAX
+                         - ((int64_t)f->recent_cpu / (1 << 16))
+                         - (f->nice * 2);
+
+        /* 범위 조정 */
+        if (new_priority > PRI_MAX)
+          new_priority = PRI_MAX;
+        if (new_priority < PRI_MIN)
+          new_priority = PRI_MIN;
+
+        f->priority = new_priority;
+      }
+    }
+  }
+/*fintos3*/
 
   /* Enforce preemption. */
   if (++thread_ticks >= TIME_SLICE)
@@ -212,7 +271,13 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+/*fintos*/
+  old_level = intr_disable ();
+  if(t->priority > thread_current()->priority)
+    thread_yield();
 
+  intr_set_level (old_level);
+/*fintos*/
   return tid;
 }
 
@@ -232,39 +297,6 @@ thread_block (void)
   schedule ();
 }
 
-/* fintos1 */
-void
-thread_sleep(int64_t ticks) {
-  enum intr_level old_level = intr_disable();
-
-  struct thread *cur = thread_current();
-  cur->wake_up_time = ticks;
-
-  list_push_back(&sleep_list, &cur->elem);
-  thread_block();
-
-  intr_set_level(old_level);
-}
-
-void
-thread_wakeup(int64_t ticks) {
-  struct list_elem *e = list_begin(&sleep_list);
-
-  while (e != list_end(&sleep_list)) {
-    struct thread *t = list_entry(e, struct thread, elem);
-
-    if (t->wake_up_time <= ticks) {
-      e = list_remove(e);
-      thread_unblock(t);
-    } else {
-      e = list_next(e);
-    }
-  }
-}
-
-
-
-
 /* Transitions a blocked thread T to the ready-to-run state.
    This is an error if T is not blocked.  (Use thread_yield() to
    make the running thread ready.)
@@ -282,8 +314,12 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
+  /*fintos2*/
   list_push_back (&ready_list, &t->elem);
+  list_sort (&ready_list, cmp_priority, NULL);
+   /*fintos2*/
   t->status = THREAD_READY;
+
   intr_set_level (old_level);
 }
 
@@ -335,6 +371,7 @@ thread_exit (void)
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
   intr_disable ();
+
   list_remove (&thread_current()->allelem);
   thread_current ()->status = THREAD_DYING;
   schedule ();
@@ -346,14 +383,19 @@ thread_exit (void)
 void
 thread_yield (void) 
 {
+
   struct thread *cur = thread_current ();
   enum intr_level old_level;
   
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
-  if (cur != idle_thread) 
+  /*fintos*/
+  if (cur != idle_thread)
+  {
     list_push_back (&ready_list, &cur->elem);
+    list_sort (&ready_list, cmp_priority, NULL);
+  }/*fintos*/
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -379,9 +421,34 @@ thread_foreach (thread_action_func *func, void *aux)
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) 
-{
-  thread_current ()->priority = new_priority;
+{/*fintos2*/
+  enum intr_level old_level;
+
+  old_level = intr_disable ();
+  if(list_empty(&thread_current()->pot_donors))
+  {
+    thread_current()->priority = new_priority; 
+    thread_current()->basepriority = new_priority;
+  }
+  else if(new_priority > thread_current()->priority)
+  {
+    thread_current()->priority = new_priority;
+    thread_current()->basepriority = new_priority;
+  }
+  else
+    thread_current()->basepriority = new_priority;
+
+  if(!list_empty(&ready_list))
+  {
+    struct list_elem *front = list_front(&ready_list);
+    struct thread *fthread = list_entry (front, struct thread, elem);
+
+    if(fthread->priority > thread_current ()->priority)
+      thread_yield();
+  }
+  intr_set_level (old_level);
 }
+/*fintos2*/
 
 /* Returns the current thread's priority. */
 int
@@ -390,36 +457,41 @@ thread_get_priority (void)
   return thread_current ()->priority;
 }
 
+/*fintos3*/
 /* Sets the current thread's nice value to NICE. */
 void
 thread_set_nice (int nice UNUSED) 
 {
-  /* Not yet implemented. */
+  thread_current()->nice = nice;/*fintos3*/
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return thread_current()->nice;/*fintos3*/
 }
+/*fintos3*/
 
+/*fintos3*/
 /* Returns 100 times the system load average. */
 int
 thread_get_load_avg (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return ((load_avg * 100) + (1 << 13)) >> 14;/*fintos3*/
 }
+/*fintos3*/
 
+/*fintos3*/
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  int recent_cpu_fp = thread_current()->recent_cpu;  // recent_cpu는 fixed-point임
+  return (recent_cpu_fp * 100 + (1 << 13)) >> 14;
+/*fintos3*/
 }
+/*fintos3*/
 
 /* Idle thread.  Executes when no other thread is ready to run.
 
@@ -504,8 +576,27 @@ init_thread (struct thread *t, const char *name, int priority)
   t->status = THREAD_BLOCKED;
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
-  t->priority = priority;
+  /*fintos3*/
+  if (thread_mlfqs) {
+    if (strcmp(t->name, "main") == 0)
+      t->recent_cpu = 0;
+    else
+      t->recent_cpu = (thread_get_recent_cpu() << 14) / 100;  // to fixed-point
+  
+    // priority = PRI_MAX - recent_cpu / 4 - nice * 2 (모두 정수로 변환 포함)
+    priority = PRI_MAX - ((t->recent_cpu + (1 << 13)) >> 14) / 4 - (t->nice * 2);
+  }  
+  /*fintos3*/
+
+  else/*fintos*/
+    t->priority = priority;
   t->magic = THREAD_MAGIC;
+  /*fintos*/
+  t->basepriority = priority;
+  t->locker = NULL;
+  t->blocked = NULL;
+  list_init (&t->pot_donors);
+  /*fintos*/
   list_push_back (&all_list, &t->allelem);
 }
 
@@ -622,3 +713,24 @@ allocate_tid (void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+/*fintos1*/
+bool cmp_waketick(struct list_elem *first, struct list_elem *second, void *aux)
+{
+  struct thread *fthread = list_entry (first, struct thread, elem);
+  struct thread *sthread = list_entry (second, struct thread, elem);
+
+  return fthread->waketick < sthread->waketick;
+
+}
+/*fintos1*/
+
+/*fintos2*/
+bool cmp_priority(struct list_elem *first, struct list_elem *second, void *aux)
+{
+  struct thread *fthread = list_entry (first, struct thread, elem);
+  struct thread *sthread = list_entry (second, struct thread, elem);
+
+  return fthread->priority > sthread->priority;
+}
+/*fintos2*/
