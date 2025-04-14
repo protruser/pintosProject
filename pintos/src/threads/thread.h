@@ -4,6 +4,9 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+/*fintos*/
+#include <kernel/list.h>
+/*fintos*/
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -93,6 +96,32 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
+   /*fintos*/
+   /*fintos2*/
+    struct list_elem donorelem;
+   /*fintos2*/
+   
+    /*fintos1*/
+    int64_t waketick;
+    /*fintos1*/
+
+    /*fintos2*/
+    int basepriority;
+
+    struct thread *locker;
+
+    struct list pot_donors;
+
+    struct lock *blocked;
+    /*fintos2*/
+
+    /*fintos3*/
+    int nice;
+
+    int recent_cpu;
+    /*fintos3*/
+    /*fintos*/
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
@@ -100,15 +129,16 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
-
-    /* fintos1 */
-    int64_t wake_up_time;
   };
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
+
+/*fintos3*/
+int load_avg;
+/*fintos3*/
 
 void thread_init (void);
 void thread_start (void);
@@ -141,4 +171,13 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
+/*fintos*/
+/*fintos1*/
+bool cmp_waketick(struct list_elem *first, struct list_elem *second, void *aux);
+/*fintos1*/
+
+/*fintos2*/
+bool cmp_priority(struct list_elem *first, struct list_elem *second, void *aux);
+/*fintos2*/
+/*fintos*/
 #endif /* threads/thread.h */
