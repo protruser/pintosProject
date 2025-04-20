@@ -2,5 +2,5 @@
 
 ### Pintos
 
-Task to modify internal function module
+Task to modify internal function module <br>
 received by Stanford's pintos project
