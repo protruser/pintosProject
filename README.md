@@ -1,3 +1,6 @@
-pintosProject
+## Operating System Design - Project 1
 
-이 프로젝트를 하는게 무슨 의미가 있는지...
+### Pintos
+
+Task to modify internal function module
+received by Stanford's pintos project
